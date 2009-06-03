@@ -1,0 +1,13 @@
+dsync - Distributed Directory Synchronization Utility
+
+dsync is intended to be an rsync-like utility that takes advantage of the
+decentralization and fault- and absentee-tolerant nature of bittorrent and git.
+
+This runs basically on the same principle as rsync, but on a peer-to-peer
+basis, rather than rsync's client-server model. Furthermore, rather than
+assuming any particular node to have the correct copy, precedence is given to
+the newest.
+
+Using bittorrent as both transfer protocol and metadata generator, and git as a
+metadata manager, a dsync'd directory structure is decentralized and tolerant
+of slow or temporarily absent nodes.
