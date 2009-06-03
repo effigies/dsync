@@ -8,6 +8,13 @@ basis, rather than rsync's client-server model. Furthermore, rather than
 assuming any particular node to have the correct copy, precedence is given to
 the newest.
 
-Using bittorrent as both transfer protocol and metadata generator, and git as a
-metadata manager, a dsync'd directory structure is decentralized and tolerant
-of slow or temporarily absent nodes.
+Bittorrent will act as the metadata generator, where the metadata are the
+.torrent files, as well as the transfer protocol, providing for minimal,
+distributed transfers. The metadata will be version-controlled by git, so no
+node becomes a single point of failure, and multiple changes of the same file
+are detected.
+
+This is particularly ideal for maintaining large collections of large files,
+for which it would be expensive to maintain revisions. In order to allow for
+proper version control, some nodes might maintain revisions to which all other
+nodes could repair.
