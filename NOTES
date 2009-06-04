@@ -1,0 +1,24 @@
+Programs:
+
+dsync
+	Synchronize mirrored hosts
+
+dinit - dsync init
+	Create a .dsync meta-directory for current directory
+
+ddd - dsync delta daemon
+	Verify each file in meta-directory at regular intervals
+
+
+Further notes:
+
+We need a way to keep track of nodes, for verification of valid peers. This
+requires some sort of web of trust. (GPG PubKey, IP) tuple signed by existing
+peer? Then, perhaps git pushes/pulls can run along these same lines, and
+bittorrent clients only connect to trusted peers (for seed OR leech).
+
+.torrent files must be multi-tracker, with every node mirroring that file a
+tracker
+
+We don't want to be constantly seeding files that are fully synced, so we need
+a way of automatically requesting reseeds and responding to said requests.
