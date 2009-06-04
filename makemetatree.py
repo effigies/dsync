@@ -42,6 +42,7 @@ Info attributes
 			str tracker	- URL of tracker
 			int size	- total size of files to be described
 		"""
+		self.name = self.uniconvert(source,ENCODING)
 		self.target = target
 		self.tracker = tracker
 		self.size = size
@@ -51,7 +52,6 @@ Info attributes
 		self.done = 0L
 		self.fs = []
 		self.totalhashed = 0L
-		self.name = self.uniconvert(source,ENCODING)
 
 	def get_piece_len(self,size): 
 		"""Parameters
@@ -77,8 +77,15 @@ Info attributes
 		return 2 ** piece_len_exp
 
 	def uniconvertl(self, l, e):
+		"""Convert a list of strings to Unicode
+
+		Parameters
+			str[]	Strings to be converted
+			str	Current string encoding
+
+		Return
+			str[]	Converted strings"""
 		r = []
-		#print l
 		try:
 			for s in l:
 				r.append(self.uniconvert(s, e))
@@ -87,6 +94,14 @@ Info attributes
 		return r
 	
 	def uniconvert(self, s, e):
+		"""Convert a string to Unicode
+
+		Parameters
+			str	String to be converted
+			str	Current string encoding
+
+		Return
+			str	Converted string"""
 		try:
 			s = unicode(s, e)
 		except UnicodeError:
@@ -135,6 +150,9 @@ Info attributes
 				self.sh = sha.sha()
 
 	def write(self):
+		"""Write a .torrent file"""
+
+		# Whatever hash we have left, we'll take
 		if self.done > 0:
 			self.pieces.append(self.sh.digest())
 
@@ -153,11 +171,22 @@ Info attributes
 
 # Recursive subfiles; gets file/directory structure and size in one go
 def subfiles(n,p=[]):
+	"""Get file/directory structure and size in one go
+
+	Parameters
+		str file	- Full file/directory name
+		str[] path	- Target path
+
+	Return
+		str[] path	- Target path
+		dirent		- Either full file/dir name OR
+				  list of return tuples from this function
+		int total	- Total size of file or subfiles"""
 	if os.path.isdir(n):
 		r=[]
 		total = 0
 		for s in sorted(os.listdir(n)):
-			if s[:1] == '.':
+			if s[0] == '.':
 				continue
 			r0 = subfiles(os.path.join(n, s), copy(p) + [s])
 			r.append(r0)
@@ -167,41 +196,33 @@ def subfiles(n,p=[]):
 	size = os.path.getsize(n)
 	return (p, n, size)
 
-#def subfiles(d,p=[]):
-#    r = []
-#    stack = [(p, d)]
-#    while len(stack) > 0:
-#        p, n = stack.pop()
-#        if os.path.isdir(n):
-#            for s in listdir(n):
-#                if s[:1] != '.':
-#                    stack.append((copy(p) + [s], os.path.join(n, s)))
-#        else:
-#            r.append((p, n))
-#    return r
-
-#def traverse(arg):
-#	p,d,s = arg
-#	if type(d) is type([]):
-#		print "Directory: %s (%d)" % ('/'.join(p),s)
-#		for i in d:
-#			traverse(i)
-#	else:
-#		print "File: %s:%s (%d)" % (d,'/'.join(p),s)
-
 def traverse(arg,tracker,target,infolist=[]):
 	"""Traverse a built file tree, constructing .torrent files at all levels
 	
 	Parameters
-	      tuple arg	- The output of a call to subfiles()
+		tuple arg	- The output of a call to subfiles()
+		str tracker	- Tracker for created .torrent files
+		str target	- Current subtree (file/directory)
+		Info[] infolist - Info objects to add current subtree to
 	"""
+
+	# p is path list (split at /)
+	# d is either a file or a list of p,d,s tuples (a subtree)
+	# s is the total size of the elements of d
 	p,d,s = arg
+
+	# p[0] is the base of the entire directory structure;
+	# We want any .torrent file built to point to the same place
 	info = Info(p[0],'/'.join([target]+p) + '.torrent',tracker,s)
+
+	# Recurse if d is a directory
 	if type(d) is type([]):
 		print "Directory: %s/%s (%d)" % (target,'/'.join(p),s)
 		os.makedirs('/'.join([target]+p))
 		for i in d:
 			traverse(i,tracker,target,infolist+[info])
+
+	# Fill the info files with the data from this file
 	else:
 		print "File: %s:%s/%s.torrent (%d)" % (d,target,'/'.join(p),s)
 		h = open(d,'rb')
@@ -219,6 +240,8 @@ def traverse(arg,tracker,target,infolist=[]):
 			for i in [info] + infolist:
 				i.add_data(buf)
 			
+	# We've either traversed or written a single full file, so
+	# finish up.
 	info.write()
 
 def main(argv=None):
@@ -270,15 +293,8 @@ def main(argv=None):
 
 			# Try to ignore some initial path elements
 			l = len(ignore)
-			if l <= len(path):
-				p = True
-				# path[:l] has to equal ignore
-				for i in range(l):
-					if ignore[i] != path[i]:
-						p = False
-						break
-				if p:
-					path = path[l:]
+			if l <= len(path) and path[:l] = ignore:
+				path = path[l:]
 
 		p,r,t = subfiles(file,prefix + path + dirname)
 		print "Total size: %d" % t
