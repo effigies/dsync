@@ -7,7 +7,6 @@ import sys
 import getopt
 import os
 import sha
-from copy import copy
 from BitTornado.bencode import bencode
 from BitTornado.BT1.btformats import check_info
 from threading import Event
@@ -20,19 +19,54 @@ except:
 	if not ENCODING:
 		ENCODING = 'ascii'
 
+
+# Generic utility functions
+def uniconvertl(srclist, encoding):
+	"""Convert a list of strings to Unicode
+
+	Parameters
+		str[]	- Strings to be converted
+		str	- Current string encoding
+
+	Return
+		str[]	- Converted strings
+	"""
+	r = []
+	try:
+		for src in srclist:
+			r.append(uniconvert(src, encoding))
+	except UnicodeError:
+		raise UnicodeError('bad filename: '+os.path.join(srclist))
+	return r
+
+def uniconvert(src, encoding):
+	"""Convert a string to Unicode
+
+	Parameters
+		str	- String to be converted
+		str	- Current string encoding
+
+	Return
+		str	- Converted string
+	"""
+	try:
+		return unicode(src, encoding).encode('utf-8')
+	except UnicodeError:
+		raise UnicodeError('bad filename: ' + src)
+
 class Info:
 	"""Info - information associated with a .torrent file
 
-Info attributes
-	str target		- absolute path of target .torrent file
-	long size		- total size of files to be described
-	long piece_length	- size of pieces
-	str[] pieces		- sha1 digests of file parts
-	sha1 HASH sh		- sha1 hash object
-	long done		- portion of piece hashed
-	dict[] fs		- metadata about files described
-	long totalhashed	- portion of total data hashed
-"""
+	Info attributes
+		str target		- absolute path of target .torrent file
+		long size		- total size of files to be described
+		long piece_length	- size of pieces
+		str[] pieces		- sha1 digests of file parts
+		sha1 HASH sh		- sha1 hash object
+		long done		- portion of piece hashed
+		dict[] fs		- metadata about files described
+		long totalhashed	- portion of total data hashed
+	"""
 
 	def __init__(self,source,target,tracker,size):
 		"""
@@ -42,7 +76,7 @@ Info attributes
 			str tracker	- URL of tracker
 			int size	- total size of files to be described
 		"""
-		self.name = self.uniconvert(source,ENCODING)
+		self.name = uniconvert(source,ENCODING)
 		self.target = target
 		self.tracker = tracker
 		self.size = size
@@ -76,37 +110,6 @@ Info attributes
 			piece_len_exp = 15	#   32K pieces
 		return 2 ** piece_len_exp
 
-	def uniconvertl(self, l, e):
-		"""Convert a list of strings to Unicode
-
-		Parameters
-			str[]	Strings to be converted
-			str	Current string encoding
-
-		Return
-			str[]	Converted strings"""
-		r = []
-		try:
-			for s in l:
-				r.append(self.uniconvert(s, e))
-		except UnicodeError:
-			raise UnicodeError('bad filename: '+os.path.join(l))
-		return r
-	
-	def uniconvert(self, s, e):
-		"""Convert a string to Unicode
-
-		Parameters
-			str	String to be converted
-			str	Current string encoding
-
-		Return
-			str	Converted string"""
-		try:
-			s = unicode(s, e)
-		except UnicodeError:
-			raise UnicodeError('bad filename: '+s)
-		return s.encode('utf-8')
 
 	def add_file_info(self, size, path):
 		"""Add file information to torrent.
@@ -115,7 +118,7 @@ Info attributes
 			long size	- size of file (in bytes)
 			str[] path	- file path (e.g. ['path','to','file.ext'])
 		"""
-		self.fs.append({'length': size, 'path': self.uniconvertl(path, ENCODING)})
+		self.fs.append({'length': size, 'path': uniconvertl(path, ENCODING)})
 
 	def add_data(self, data):
 		"""Process a segment of data.
@@ -169,86 +172,77 @@ Info attributes
 		h.write(bencode(data))
 		h.close()
 
-# Recursive subfiles; gets file/directory structure and size in one go
-def subfiles(n,p=[]):
-	"""Get file/directory structure and size in one go
+class BTTree:
+	def __init__(self, loc, path = []):
+		self.loc = os.path.abspath(loc)
+		self.path = path
+		if os.path.isfile(loc):
+			self.subs = None
+			self.size = os.path.getsize(loc)
+		elif os.path.isdir(loc):
+			self.subs = []
+			for sub in sorted(os.listdir(self.loc)):
+				if sub[0] == '.':
+					continue
+				sloc = os.path.join(loc,sub)
+				spath = self.path + [sub]
+				try:
+					self.subs.append(BTTree(sloc,spath))
+				except problem:
+					print problem
 
-	Parameters
-		str file	- Full file/directory name
-		str[] path	- Target path
+			self.size = sum([sub.size for sub in self.subs])
+		else:
+			raise Exception("Entry is neither file nor directory: %s"
+				% loc)
 
-	Return
-		str[] path	- Target path
-		dirent		- Either full file/dir name OR
-				  list of return tuples from this function
-		int total	- Total size of file or subfiles"""
-	if os.path.isdir(n):
-		r=[]
-		total = 0
-		for s in sorted(os.listdir(n)):
-			if s[0] == '.':
-				continue
-			r0 = subfiles(os.path.join(n, s), copy(p) + [s])
-			r.append(r0)
-			total += r0[2]
-		return (p, r, total)
+	def buildMetaTree(self, tracker, target, infolist = []):
+		info = Info(	self.path[0],
+				os.path.join(target, *self.path) + '.torrent',
+				tracker,
+				self.size)
 
-	size = os.path.getsize(n)
-	return (p, n, size)
+		infos = infolist + [info]
 
-def traverse(arg,tracker,target,infolist=[]):
-	"""Traverse a built file tree, constructing .torrent files at all levels
-	
-	Parameters
-		tuple arg	- The output of a call to subfiles()
-		str tracker	- Tracker for created .torrent files
-		str target	- Current subtree (file/directory)
-		Info[] infolist - Info objects to add current subtree to
-	"""
+		if self.subs is not None:
+			for sub in self.subs:
+				sub.buildMetaTree(tracker, target, infos)
 
-	# p is path list (split at /)
-	# d is either a file or a list of p,d,s tuples (a subtree)
-	# s is the total size of the elements of d
-	p,d,s = arg
+		else:
+			h = open(self.loc,'rb')
+			pos = 0L
+			piece_length = max([i.piece_length for i in infos])
 
-	# p[0] is the base of the entire directory structure;
-	# We want any .torrent file built to point to the same place
-	info = Info(p[0],'/'.join([target]+p) + '.torrent',tracker,s)
+			while pos < self.size:
+				a = min(piece_length, self.size - pos)
+				buf = h.read(a)
+				pos += a
+				[i.add_data(buf) for i in infos]
 
-	# Recurse if d is a directory
-	if type(d) is type([]):
-		print "Directory: %s/%s (%d)" % (target,'/'.join(p),s)
-		os.makedirs('/'.join([target]+p))
-		for i in d:
-			traverse(i,tracker,target,infolist+[info])
+		target_dir = os.path.split(info.target)[0]
+		if not os.path.exists(target_dir):
+			os.makedirs(target_dir)
+		info.write()
 
-	# Fill the info files with the data from this file
-	else:
-		print "File: %s:%s/%s.torrent (%d)" % (d,target,'/'.join(p),s)
-		h = open(d,'rb')
-		pos = 0L
-		piece_length = 0
-		for i in [info] + infolist:
-			i.add_file_info(s,p[1:])
-			if i.piece_length > piece_length:
-				piece_length = i.piece_length
+def main(argv):
+	help = """Usage: %s [OPTIONS] TRACKER [DIRS]
+Build a meta-tree of each directory in DIRS
+When DIRS is a single file, behaves essentially like btmakemetafile.
 
-		while pos < s:
-			a = min(piece_length, s - pos)
-			buf = h.read(a)
-			pos += a
-			for i in [info] + infolist:
-				i.add_data(buf)
-			
-	# We've either traversed or written a single full file, so
-	# finish up.
-	info.write()
+	--help		display this help and exit
+	--use-path	use the path as given in the .torrent files
+	--prefix	prepend some path info in .torrent files
+	--ignore-prefix	ignore part of path (implies --use-path)
+	--target	build meta-tree elsewhere than in the source directory
+	""" % argv[0].split('/')[-1]
 
-def main(argv=None):
-	if argv is None:
-		argv = sys.argv
+	if len(argv) == 1:
+		print help
+		return 1
+
 	try:
-		opts, args = getopt.getopt(sys.argv[1:], "hi:p:ut:", ["help","ignore-prefix=","prefix=","use-path","target="])
+		opts, args = getopt.getopt(argv[1:], "hi:p:ut:",
+			["help","ignore-prefix=","prefix=","use-path","target="])
 	except getopt.error, msg:
 		print msg
 		return 0
@@ -261,7 +255,7 @@ def main(argv=None):
 	# Parse arguments
 	for opt, arg in opts:
 		if opt in ('-h','--help'):
-			print "Hopefully you're just me."
+			print help
 			return 0
 		elif opt in ('-u','--use-path'):
 			u = True
@@ -293,14 +287,13 @@ def main(argv=None):
 
 			# Try to ignore some initial path elements
 			l = len(ignore)
-			if l <= len(path) and path[:l] = ignore:
+			if l <= len(path) and path[:l] == ignore:
 				path = path[l:]
 
-		p,r,t = subfiles(file,prefix + path + dirname)
-		print "Total size: %d" % t
-		traverse((p,r,t),tracker,target)
+		tree = BTTree(file, prefix + path + dirname)
+		tree.buildMetaTree(tracker,target)
 
 	return 0
 
 if __name__ == '__main__':
-	sys.exit(main())
+	sys.exit(main(sys.argv))
