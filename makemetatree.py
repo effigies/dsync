@@ -58,17 +58,17 @@ class Info:
 	"""Info - information associated with a .torrent file
 
 	Info attributes
-		str target		- absolute path of target .torrent file
-		long size		- total size of files to be described
-		long piece_length	- size of pieces
-		str[] pieces		- sha1 digests of file parts
-		sha1 HASH sh		- sha1 hash object
-		long done		- portion of piece hashed
-		dict[] fs		- metadata about files described
-		long totalhashed	- portion of total data hashed
+		str	target		- absolute path of target .torrent file
+		long	size		- total size of files to be described
+		long	piece_length	- size of pieces
+		str[]	pieces		- sha1 digests of file parts
+		sha1	HASH sh		- sha1 hash object
+		long	done		- portion of piece hashed
+		dict[]	fs		- metadata about files described
+		long	totalhashed	- portion of total data hashed
 	"""
 
-	def __init__(self,source,target,tracker,size):
+	def __init__(self, source, target, tracker, size):
 		"""
 		Parameters
 			str source	- source file name (last path element)
@@ -87,12 +87,12 @@ class Info:
 		self.fs = []
 		self.totalhashed = 0L
 
-	def get_piece_len(self,size): 
+	def get_piece_len(self, size): 
 		"""Parameters
-			int size	- size of files to be described by torrent
+			long	size	- size of files described by torrent
 
 		Return
-			int		- size of pieces to hash
+			long		- size of pieces to hash
 		"""
 		if   size > 8L*1024*1024*1024:	# > 8 gig =
 			piece_len_exp = 21	#   2 meg pieces
@@ -115,8 +115,8 @@ class Info:
 		"""Add file information to torrent.
 
 		Parameters
-			long size	- size of file (in bytes)
-			str[] path	- file path (e.g. ['path','to','file.ext'])
+			long	size	size of file (in bytes)
+			str[]	path	file path e.g. ['path','to','file.ext']
 		"""
 		self.fs.append({'length': size, 'path': uniconvertl(path, ENCODING)})
 
@@ -173,45 +173,76 @@ class Info:
 		h.close()
 
 class BTTree:
-	def __init__(self, loc, path = []):
+	"""BTTree - Recursive data structure that tracks the total size of a
+	file or directory, which can then be used to create torrent files.
+
+	BTTree attributes
+		str	 loc	Location of source file/directory
+		str[]	 path	Path
+		BTTree[] subs	List of direct children (empty, if a file)
+		int	 size	Total size of subfiles (or self, if a file)
+	"""
+	def __init__(self, loc, path):
+		"""
+		Parameters
+			str	loc	Location of source file/directory
+			str[]	path	File path e.g. ['path','to','file.ext']
+		"""
 		self.loc = os.path.abspath(loc)
 		self.path = path
+		self.subs = []
+
+		# The only important bit of information at this stage is size
 		if os.path.isfile(loc):
-			self.subs = None
 			self.size = os.path.getsize(loc)
+
+		# We'll need to know the size of all subfiles
 		elif os.path.isdir(loc):
-			self.subs = []
 			for sub in sorted(os.listdir(self.loc)):
+				# Ignore .* (glob, not regex)
 				if sub[0] == '.':
 					continue
 				sloc = os.path.join(loc,sub)
 				spath = self.path + [sub]
 				try:
 					self.subs.append(BTTree(sloc,spath))
+
+				# Notify, but ignore entries that are neither
+				# files nor directories
 				except problem:
 					print problem
 
+			# For bittorrent's purposes, size(dir) = size(subs)
 			self.size = sum([sub.size for sub in self.subs])
 		else:
 			raise Exception("Entry is neither file nor directory: %s"
 				% loc)
 
-	def buildMetaTree(self, tracker, target, infolist = []):
+	def buildMetaTree(self, tracker, target, infos = []):
+		"""Construct a directory structure such that, for every path in
+		the source structure defined by the object, there is a .torrent
+		file describing it.
+
+		Parameters
+			str	tracker	- URL of tracker
+			str	target	- target directory
+			Info[]	infos	- List of Info's to add current file to
+		"""
 		info = Info(	self.path[0],
 				os.path.join(target, *self.path) + '.torrent',
 				tracker,
 				self.size)
 
-		infos = infolist + [info]
+		# Since append updates the object, while + creates a new one
+		infos += [info]
 
-		if self.subs is not None:
-			for sub in self.subs:
-				sub.buildMetaTree(tracker, target, infos)
-
-		else:
+		# Add the file pointed to by this BTTree to all infos
+		if self.subs == []:
 			h = open(self.loc,'rb')
 			pos = 0L
-			piece_length = max([i.piece_length for i in infos])
+			for i in infos:
+				piece_length = max(piece_length, i.piece_length)
+				i.add_file_info(self.size, self.path)
 
 			while pos < self.size:
 				a = min(piece_length, self.size - pos)
@@ -219,9 +250,18 @@ class BTTree:
 				pos += a
 				[i.add_data(buf) for i in infos]
 
+			h.close()
+
+		# Recurse in this directory
+		else:
+			for sub in self.subs:
+				sub.buildMetaTree(tracker, target, infos)
+
+		# Verify we can make our target .torrent file
 		target_dir = os.path.split(info.target)[0]
 		if not os.path.exists(target_dir):
 			os.makedirs(target_dir)
+
 		info.write()
 
 def main(argv):
